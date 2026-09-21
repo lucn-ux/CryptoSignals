@@ -1,5 +1,6 @@
 // Trading Signal Engine
 // Uses real market data to generate technical analysis signals for BTC/USD and ETH/USD
+// Supports multiple Risk:Reward ratio variants (1:2, 1:3, 1:4)
 
 import { fetchKlines, type KlineData } from './cryptoApi';
 
@@ -24,11 +25,27 @@ export interface TradingSignal {
   targetPrice: number;
   stopLoss: number;
   riskRewardRatio: string;
+  rrMultiple: number; // The R:R multiplier (e.g., 2 for 1:2, 3 for 1:3)
   timeframe: TimeFrame;
   indicators: TechnicalIndicator[];
   confidence: number;
+  probability: number; // Estimated win probability based on R:R
   timestamp: Date;
   reasoning: string;
+  potentialProfit: number; // % potential profit
+  potentialLoss: number; // % potential loss
+}
+
+export interface SignalAnalysis {
+  baseSignal: SignalType;
+  strength: SignalStrength;
+  indicators: TechnicalIndicator[];
+  confidence: number;
+  reasoning: string;
+  atr: number;
+  currentPrice: number;
+  buyCount: number;
+  sellCount: number;
 }
 
 // Calculate RSI
@@ -143,21 +160,13 @@ function calculateATR(klines: KlineData[], period: number = 14): number {
   return totalTR / period;
 }
 
-// Generate trading signal from real kline data
-export function generateSignalFromData(
-  pair: Pair,
-  timeframe: TimeFrame,
-  klines: KlineData[]
-): TradingSignal {
-  if (klines.length < 10) {
-    // Fallback if insufficient data
-    return generateFallbackSignal(pair, timeframe);
-  }
+// Analyze market conditions (shared across all R:R variants)
+function analyzeMarket(pair: Pair, klines: KlineData[]): SignalAnalysis | null {
+  if (klines.length < 10) return null;
   
   const closes = klines.map(k => k.close);
   const currentPrice = closes[closes.length - 1];
   
-  // Calculate indicators from real data
   const rsi = calculateRSI(closes);
   const macd = calculateMACD(closes);
   const ma20 = calculateSMA(closes, 20);
@@ -166,7 +175,6 @@ export function generateSignalFromData(
   const stoch = calculateStochastic(klines);
   const atr = calculateATR(klines);
   
-  // Build indicators array
   const indicators: TechnicalIndicator[] = [
     {
       name: 'RSI (14)',
@@ -206,74 +214,177 @@ export function generateSignalFromData(
     },
   ];
   
-  // Determine overall signal
   const buyCount = indicators.filter(i => i.signal === 'BUY').length;
   const sellCount = indicators.filter(i => i.signal === 'SELL').length;
   
-  let overallSignal: SignalType;
+  let baseSignal: SignalType;
   let strength: SignalStrength;
   let confidence: number;
   
   if (buyCount >= 4) {
-    overallSignal = 'BUY';
+    baseSignal = 'BUY';
     strength = buyCount >= 5 ? 'Strong' : 'Moderate';
     confidence = Math.min(92, 65 + buyCount * 5);
   } else if (sellCount >= 4) {
-    overallSignal = 'SELL';
+    baseSignal = 'SELL';
     strength = sellCount >= 5 ? 'Strong' : 'Moderate';
     confidence = Math.min(92, 65 + sellCount * 5);
   } else {
-    overallSignal = 'HOLD';
+    baseSignal = 'HOLD';
     strength = 'Weak';
     confidence = 40 + Math.round(Math.random() * 15);
   }
   
-  // Calculate targets using ATR for realistic stop/target placement
-  const multiplier = timeframe === 'intraday' ? 1 : 2;
-  const riskATR = atr || currentPrice * 0.015;
-  
-  let entryPrice: number, targetPrice: number, stopLoss: number;
-  
-  if (overallSignal === 'BUY') {
-    entryPrice = currentPrice;
-    targetPrice = currentPrice + riskATR * multiplier * 1.5;
-    stopLoss = currentPrice - riskATR * multiplier;
-  } else if (overallSignal === 'SELL') {
-    entryPrice = currentPrice;
-    targetPrice = currentPrice - riskATR * multiplier * 1.5;
-    stopLoss = currentPrice + riskATR * multiplier;
-  } else {
-    entryPrice = currentPrice;
-    targetPrice = currentPrice + riskATR * 0.5;
-    stopLoss = currentPrice - riskATR * 0.5;
-  }
-  
-  const risk = Math.abs(entryPrice - stopLoss);
-  const reward = Math.abs(targetPrice - entryPrice);
-  const rrRatio = risk > 0 ? (reward / risk).toFixed(1) : '1.0';
-  
   const pairName = pair === 'BTCUSD' ? 'Bitcoin' : 'Ethereum';
-  const reasonings = {
-    BUY: `${pairName} showing bullish momentum with ${buyCount}/6 indicators confirming upward movement. RSI at ${rsi} indicates ${rsi < 40 ? 'room for upside' : 'sustained buying pressure'}. MACD histogram at ${macd.histogram} confirms trend direction. ATR-based targets provide realistic risk management.`,
-    SELL: `${pairName} showing bearish pressure with ${sellCount}/6 indicators confirming downward movement. RSI at ${rsi} indicates ${rsi > 60 ? 'exhaustion' : 'continued selling'}. Consider reducing exposure with proper risk management.`,
-    HOLD: `${pairName} in consolidation phase. Mixed signals from indicators suggest waiting for clearer direction. RSI at ${rsi} is neutral. Wait for breakout confirmation before entering positions.`,
-  };
+  const reasoning = baseSignal === 'BUY'
+    ? `${pairName} showing bullish momentum with ${buyCount}/6 indicators confirming upward movement. RSI at ${rsi} indicates ${rsi < 40 ? 'room for upside' : 'sustained buying pressure'}. MACD histogram at ${macd.histogram} confirms trend direction.`
+    : baseSignal === 'SELL'
+    ? `${pairName} showing bearish pressure with ${sellCount}/6 indicators confirming downward movement. RSI at ${rsi} indicates ${rsi > 60 ? 'exhaustion' : 'continued selling'}. Consider reducing exposure.`
+    : `${pairName} in consolidation phase. Mixed signals from indicators suggest waiting for clearer direction. RSI at ${rsi} is neutral.`;
   
   return {
-    id: `${pair}-${timeframe}-${Date.now()}`,
-    pair,
-    type: overallSignal,
+    baseSignal,
     strength,
-    entryPrice: Math.round(entryPrice * 100) / 100,
-    targetPrice: Math.round(targetPrice * 100) / 100,
-    stopLoss: Math.round(stopLoss * 100) / 100,
-    riskRewardRatio: `1:${rrRatio}`,
-    timeframe,
     indicators,
     confidence,
-    timestamp: new Date(),
-    reasoning: reasonings[overallSignal],
+    reasoning,
+    atr: atr || currentPrice * 0.015,
+    currentPrice,
+    buyCount,
+    sellCount,
   };
+}
+
+// Generate multiple signal variants with different R:R ratios
+export function generateSignalVariants(
+  pair: Pair,
+  timeframe: TimeFrame,
+  klines: KlineData[]
+): TradingSignal[] {
+  const analysis = analyzeMarket(pair, klines);
+  
+  if (!analysis || analysis.baseSignal === 'HOLD') {
+    // Return a single HOLD signal if market is neutral
+    return [{
+      id: `${pair}-${timeframe}-hold-${Date.now()}`,
+      pair,
+      type: 'HOLD',
+      strength: 'Weak',
+      entryPrice: analysis?.currentPrice || 0,
+      targetPrice: 0,
+      stopLoss: 0,
+      riskRewardRatio: 'N/A',
+      rrMultiple: 0,
+      timeframe,
+      indicators: analysis?.indicators || [],
+      confidence: analysis?.confidence || 0,
+      probability: 0,
+      timestamp: new Date(),
+      reasoning: analysis?.reasoning || 'Market in consolidation. Wait for clearer direction.',
+      potentialProfit: 0,
+      potentialLoss: 0,
+    }];
+  }
+  
+  const { baseSignal, strength, indicators, confidence, reasoning, atr, currentPrice } = analysis;
+  const isBuy = baseSignal === 'BUY';
+  
+  // Define R:R variants with their characteristics
+  const rrVariants = [
+    { 
+      multiple: 2, 
+      label: '1:2',
+      // Conservative - tighter stop, moderate target
+      stopMultiplier: 1.0,
+      targetMultiplier: 2.0,
+      // Higher win probability, lower reward
+      probabilityBoost: 10,
+      description: 'Conservative approach with tighter risk management'
+    },
+    { 
+      multiple: 3, 
+      label: '1:3',
+      // Balanced - standard stop, good target
+      stopMultiplier: 1.2,
+      targetMultiplier: 3.6,
+      probabilityBoost: 0,
+      description: 'Balanced approach - optimal risk/reward ratio'
+    },
+    { 
+      multiple: 4, 
+      label: '1:4',
+      // Aggressive - wider stop, large target
+      stopMultiplier: 1.5,
+      targetMultiplier: 6.0,
+      probabilityBoost: -10,
+      description: 'Aggressive approach targeting larger moves'
+    },
+  ];
+  
+  const timeframeMultiplier = timeframe === 'intraday' ? 0.8 : 1.5;
+  
+  return rrVariants.map((variant, index) => {
+    const stopDistance = atr * variant.stopMultiplier * timeframeMultiplier;
+    const targetDistance = atr * variant.targetMultiplier * timeframeMultiplier;
+    
+    const entryPrice = currentPrice;
+    const stopLoss = isBuy 
+      ? currentPrice - stopDistance 
+      : currentPrice + stopDistance;
+    const targetPrice = isBuy 
+      ? currentPrice + targetDistance 
+      : currentPrice - targetDistance;
+    
+    const potentialProfit = (targetDistance / entryPrice) * 100;
+    const potentialLoss = (stopDistance / entryPrice) * 100;
+    
+    // Adjust confidence based on R:R (higher R:R = lower probability)
+    const adjustedConfidence = Math.max(35, Math.min(90, confidence + variant.probabilityBoost));
+    
+    // Estimated win probability (simplified model)
+    // Base probability from signal strength, adjusted by R:R
+    const baseProbability = isBuy 
+      ? 50 + (analysis.buyCount * 5) 
+      : 50 + (analysis.sellCount * 5);
+    const probability = Math.max(30, Math.min(85, baseProbability + variant.probabilityBoost));
+    
+    return {
+      id: `${pair}-${timeframe}-rr${variant.multiple}-${Date.now()}-${index}`,
+      pair,
+      type: baseSignal,
+      strength,
+      entryPrice: Math.round(entryPrice * 100) / 100,
+      targetPrice: Math.round(targetPrice * 100) / 100,
+      stopLoss: Math.round(stopLoss * 100) / 100,
+      riskRewardRatio: variant.label,
+      rrMultiple: variant.multiple,
+      timeframe,
+      indicators,
+      confidence: adjustedConfidence,
+      probability,
+      timestamp: new Date(),
+      reasoning: `${reasoning} ${variant.description}. Risk: $${stopDistance.toFixed(2)} per unit, Potential Reward: $${targetDistance.toFixed(2)} per unit.`,
+      potentialProfit: Math.round(potentialProfit * 100) / 100,
+      potentialLoss: Math.round(potentialLoss * 100) / 100,
+    };
+  });
+}
+
+// Fetch real kline data and generate signal variants
+export async function fetchAndGenerateSignals(
+  pair: Pair,
+  timeframe: TimeFrame
+): Promise<TradingSignal[]> {
+  try {
+    const klines = await fetchKlines(pair, timeframe);
+    if (klines.length === 0) {
+      return [generateFallbackSignal(pair, timeframe)];
+    }
+    return generateSignalVariants(pair, timeframe, klines);
+  } catch (error) {
+    console.error('Error generating signals:', error);
+    return [generateFallbackSignal(pair, timeframe)];
+  }
 }
 
 // Fallback signal when API data is unavailable
@@ -287,29 +398,16 @@ function generateFallbackSignal(pair: Pair, timeframe: TimeFrame): TradingSignal
     targetPrice: 0,
     stopLoss: 0,
     riskRewardRatio: 'N/A',
+    rrMultiple: 0,
     timeframe,
     indicators: [],
     confidence: 0,
+    probability: 0,
     timestamp: new Date(),
     reasoning: 'Unable to fetch market data. Please check your internet connection and try again.',
+    potentialProfit: 0,
+    potentialLoss: 0,
   };
-}
-
-// Fetch real kline data and generate signal
-export async function fetchAndGenerateSignal(
-  pair: Pair,
-  timeframe: TimeFrame
-): Promise<TradingSignal> {
-  try {
-    const klines = await fetchKlines(pair, timeframe);
-    if (klines.length === 0) {
-      return generateFallbackSignal(pair, timeframe);
-    }
-    return generateSignalFromData(pair, timeframe, klines);
-  } catch (error) {
-    console.error('Error generating signal:', error);
-    return generateFallbackSignal(pair, timeframe);
-  }
 }
 
 // Get kline data for chart

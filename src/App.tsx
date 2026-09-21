@@ -2,22 +2,24 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   TrendingUp, TrendingDown, Minus, RefreshCw, Clock,
-  Target, Shield, BarChart3, Activity, Zap, AlertTriangle,
-  ArrowUpRight, ArrowDownRight, WifiOff
+  Activity, Zap, AlertTriangle,
+  ArrowUpRight, ArrowDownRight, WifiOff, Layers
 } from 'lucide-react';
 import {
-  fetchAndGenerateSignal,
+  fetchAndGenerateSignals,
   type TradingSignal, type Pair, type TimeFrame, type SignalType
 } from './utils/signalEngine';
 import { fetchTicker, type TickerData } from './utils/cryptoApi';
 import PriceChart from './components/PriceChart';
 import IndicatorPanel from './components/IndicatorPanel';
 import SignalHistory from './components/SignalHistory';
+import RRSignalCard from './components/RRSignalCard';
 
 function App() {
   const [activePair, setActivePair] = useState<Pair>('BTCUSD');
   const [activeTimeframe, setActiveTimeframe] = useState<TimeFrame>('intraday');
-  const [signal, setSignal] = useState<TradingSignal | null>(null);
+  const [signals, setSignals] = useState<TradingSignal[]>([]);
+  const [selectedRR, setSelectedRR] = useState<number>(3); // Default to 1:3
   const [isGenerating, setIsGenerating] = useState(false);
   const [tickerData, setTickerData] = useState<TickerData | null>(null);
   const [signalHistory, setSignalHistory] = useState<TradingSignal[]>([]);
@@ -34,26 +36,32 @@ function App() {
     }
   }, [activePair]);
 
-  const generateNewSignal = useCallback(async () => {
+  const generateNewSignals = useCallback(async () => {
     setIsGenerating(true);
     setApiError(null);
     
     try {
-      const newSignal = await fetchAndGenerateSignal(activePair, activeTimeframe);
-      setSignal(newSignal);
-      setSignalHistory(prev => [newSignal, ...prev].slice(0, 20));
+      const newSignals = await fetchAndGenerateSignals(activePair, activeTimeframe);
+      setSignals(newSignals);
+      
+      // Add the currently selected signal to history
+      const selected = newSignals.find(s => s.rrMultiple === selectedRR) || newSignals[0];
+      if (selected && selected.entryPrice > 0) {
+        setSignalHistory(prev => [selected, ...prev].slice(0, 20));
+      }
+      
       setLastUpdate(new Date());
       await updateTicker();
     } catch (error) {
-      setApiError('Failed to generate signal. Please try again.');
+      setApiError('Failed to generate signals. Please try again.');
     } finally {
       setIsGenerating(false);
     }
-  }, [activePair, activeTimeframe, updateTicker]);
+  }, [activePair, activeTimeframe, selectedRR, updateTicker]);
 
   // Initial load and when pair/timeframe changes
   useEffect(() => {
-    generateNewSignal();
+    generateNewSignals();
   }, [activePair, activeTimeframe]);
 
   // Auto-refresh ticker every 10 seconds
@@ -67,14 +75,6 @@ function App() {
       case 'BUY': return 'text-green-400';
       case 'SELL': return 'text-red-400';
       default: return 'text-yellow-400';
-    }
-  };
-
-  const getSignalBg = (type: SignalType) => {
-    switch (type) {
-      case 'BUY': return 'bg-green-500/10 border-green-500/30';
-      case 'SELL': return 'bg-red-500/10 border-red-500/30';
-      default: return 'bg-yellow-500/10 border-yellow-500/30';
     }
   };
 
@@ -93,6 +93,9 @@ function App() {
     return `$${vol.toFixed(2)}`;
   };
 
+  const selectedSignal = signals.find(s => s.rrMultiple === selectedRR) || signals[0];
+  const isHoldSignal = selectedSignal?.type === 'HOLD';
+
   return (
     <div className="min-h-screen bg-[#0a0e17] text-gray-100">
       {/* Header */}
@@ -106,7 +109,7 @@ function App() {
               <h1 className="text-xl font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
                 CryptoSignal Pro
               </h1>
-              <p className="text-xs text-gray-500">Real-Time Trading Signals • Binance Data</p>
+              <p className="text-xs text-gray-500">Real-Time Signals • Multiple R:R Ratios</p>
             </div>
           </div>
           
@@ -119,12 +122,12 @@ function App() {
             <motion.button
               whileHover={{ scale: 1.05 }}
               whileTap={{ scale: 0.95 }}
-              onClick={generateNewSignal}
+              onClick={generateNewSignals}
               disabled={isGenerating}
               className="px-4 py-2 bg-gradient-to-r from-blue-600 to-purple-600 rounded-lg text-sm font-medium flex items-center gap-2 hover:from-blue-500 hover:to-purple-500 transition-all disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${isGenerating ? 'animate-spin' : ''}`} />
-              <span className="hidden sm:inline">Refresh Signal</span>
+              <span className="hidden sm:inline">Refresh</span>
             </motion.button>
           </div>
         </div>
@@ -216,19 +219,13 @@ function App() {
               <div className="text-center">
                 <p className="text-xs text-gray-500 mb-1">24h High</p>
                 <p className="text-sm font-medium text-green-400">
-                  {tickerData 
-                    ? `$${tickerData.highPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                    : '---'
-                  }
+                  {tickerData ? `$${tickerData.highPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '---'}
                 </p>
               </div>
               <div className="text-center">
                 <p className="text-xs text-gray-500 mb-1">24h Low</p>
                 <p className="text-sm font-medium text-red-400">
-                  {tickerData 
-                    ? `$${tickerData.lowPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}`
-                    : '---'
-                  }
+                  {tickerData ? `$${tickerData.lowPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}` : '---'}
                 </p>
               </div>
               <div className="text-center">
@@ -241,11 +238,68 @@ function App() {
           </div>
         </motion.div>
 
+        {/* R:R Ratio Selector */}
+        {!isGenerating && signals.length > 0 && !isHoldSignal && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6"
+          >
+            <div className="flex items-center gap-2 mb-3">
+              <Layers className="w-4 h-4 text-purple-400" />
+              <h3 className="text-sm font-medium text-gray-300">Select Risk:Reward Ratio</h3>
+              <span className="text-xs text-gray-500 ml-auto">Higher R:R = Greater potential reward, lower probability</span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              {signals.filter(s => s.rrMultiple > 0).map((signal) => (
+                <button
+                  key={signal.id}
+                  onClick={() => setSelectedRR(signal.rrMultiple)}
+                  className={`p-4 rounded-xl border transition-all text-left ${
+                    selectedRR === signal.rrMultiple
+                      ? signal.type === 'BUY'
+                        ? 'bg-green-500/10 border-green-500/50 ring-1 ring-green-500/30'
+                        : 'bg-red-500/10 border-red-500/50 ring-1 ring-red-500/30'
+                      : 'bg-[#111827] border-gray-800 hover:border-gray-700'
+                  }`}
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-lg font-bold text-white">R:R {signal.riskRewardRatio}</span>
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium ${
+                      signal.rrMultiple === 2 ? 'bg-blue-500/20 text-blue-400' :
+                      signal.rrMultiple === 3 ? 'bg-purple-500/20 text-purple-400' :
+                      'bg-orange-500/20 text-orange-400'
+                    }`}>
+                      {signal.rrMultiple === 2 ? 'Conservative' : signal.rrMultiple === 3 ? 'Balanced' : 'Aggressive'}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-gray-400">Win Probability</span>
+                    <span className={`font-medium ${
+                      signal.probability > 60 ? 'text-green-400' :
+                      signal.probability > 45 ? 'text-yellow-400' :
+                      'text-red-400'
+                    }`}>{signal.probability}%</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs mt-1">
+                    <span className="text-gray-400">Potential Reward</span>
+                    <span className="text-green-400 font-medium">+{signal.potentialProfit.toFixed(2)}%</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs mt-1">
+                    <span className="text-gray-400">Max Risk</span>
+                    <span className="text-red-400 font-medium">-{signal.potentialLoss.toFixed(2)}%</span>
+                  </div>
+                </button>
+              ))}
+            </div>
+          </motion.div>
+        )}
+
         {/* Main Signal Display */}
         <AnimatePresence mode="wait">
-          {signal && !isGenerating && signal.entryPrice > 0 && (
+          {selectedSignal && !isGenerating && selectedSignal.entryPrice > 0 && !isHoldSignal && (
             <motion.div
-              key={signal.id}
+              key={`${selectedSignal.id}-${selectedRR}`}
               initial={{ opacity: 0, scale: 0.95 }}
               animate={{ opacity: 1, scale: 1 }}
               exit={{ opacity: 0, scale: 0.95 }}
@@ -253,98 +307,7 @@ function App() {
               className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6"
             >
               {/* Main Signal Card */}
-              <div className={`lg:col-span-1 rounded-xl p-6 border ${getSignalBg(signal.type)} signal-card`}>
-                <div className="flex items-center justify-between mb-4">
-                  <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">
-                    {signal.timeframe === 'intraday' ? '⚡ Intraday Signal' : '📈 Swing Signal'}
-                  </span>
-                  <span className={`px-2 py-0.5 rounded text-xs font-medium ${
-                    signal.strength === 'Strong' ? 'bg-green-500/20 text-green-400' :
-                    signal.strength === 'Moderate' ? 'bg-blue-500/20 text-blue-400' :
-                    'bg-yellow-500/20 text-yellow-400'
-                  }`}>
-                    {signal.strength}
-                  </span>
-                </div>
-                
-                <div className="flex items-center gap-3 mb-6">
-                  <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
-                    signal.type === 'BUY' ? 'bg-green-500/20 pulse-green' :
-                    signal.type === 'SELL' ? 'bg-red-500/20 pulse-red' :
-                    'bg-yellow-500/20'
-                  }`}>
-                    <span className={getSignalColor(signal.type)}>
-                      {getSignalIcon(signal.type)}
-                    </span>
-                  </div>
-                  <div>
-                    <h2 className={`text-3xl font-bold ${getSignalColor(signal.type)}`}>
-                      {signal.type}
-                    </h2>
-                    <p className="text-sm text-gray-400">
-                      Confidence: {signal.confidence}%
-                    </p>
-                  </div>
-                </div>
-
-                {/* Confidence Bar */}
-                <div className="mb-6">
-                  <div className="flex justify-between text-xs text-gray-500 mb-1">
-                    <span>Confidence Level</span>
-                    <span>{signal.confidence}%</span>
-                  </div>
-                  <div className="h-2 bg-[#1a2332] rounded-full overflow-hidden">
-                    <motion.div
-                      initial={{ width: 0 }}
-                      animate={{ width: `${signal.confidence}%` }}
-                      transition={{ duration: 1, delay: 0.3 }}
-                      className={`h-full rounded-full ${
-                        signal.confidence > 75 ? 'bg-green-500' :
-                        signal.confidence > 50 ? 'bg-blue-500' :
-                        'bg-yellow-500'
-                      }`}
-                    />
-                  </div>
-                </div>
-
-                {/* Trade Details */}
-                <div className="space-y-3">
-                  <div className="flex items-center justify-between py-2 border-b border-gray-700/50">
-                    <div className="flex items-center gap-2 text-gray-400">
-                      <Target className="w-4 h-4" />
-                      <span className="text-sm">Entry Price</span>
-                    </div>
-                    <span className="font-medium text-white">
-                      ${signal.entryPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2 border-b border-gray-700/50">
-                    <div className="flex items-center gap-2 text-gray-400">
-                      <TrendingUp className="w-4 h-4 text-green-400" />
-                      <span className="text-sm">Target</span>
-                    </div>
-                    <span className="font-medium text-green-400">
-                      ${signal.targetPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2 border-b border-gray-700/50">
-                    <div className="flex items-center gap-2 text-gray-400">
-                      <Shield className="w-4 h-4 text-red-400" />
-                      <span className="text-sm">Stop Loss</span>
-                    </div>
-                    <span className="font-medium text-red-400">
-                      ${signal.stopLoss.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2">
-                    <div className="flex items-center gap-2 text-gray-400">
-                      <BarChart3 className="w-4 h-4" />
-                      <span className="text-sm">Risk/Reward</span>
-                    </div>
-                    <span className="font-medium text-blue-400">{signal.riskRewardRatio}</span>
-                  </div>
-                </div>
-              </div>
+              <RRSignalCard signal={selectedSignal} />
 
               {/* Chart */}
               <div className="lg:col-span-2 bg-[#111827] rounded-xl p-4 border border-gray-800">
@@ -358,10 +321,75 @@ function App() {
                   </div>
                 </div>
                 <PriceChart pair={activePair} timeframe={activeTimeframe} />
+                
+                {/* Price Levels Overlay */}
+                <div className="mt-4 pt-4 border-t border-gray-800">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="text-center">
+                      <p className="text-xs text-gray-500 mb-1">Stop Loss</p>
+                      <p className="text-sm font-bold text-red-400">
+                        ${selectedSignal.stopLoss.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </p>
+                      <p className="text-xs text-red-400/70">-{selectedSignal.potentialLoss.toFixed(2)}%</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-gray-500 mb-1">Entry Price</p>
+                      <p className="text-sm font-bold text-white">
+                        ${selectedSignal.entryPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </p>
+                      <p className="text-xs text-gray-400">Current</p>
+                    </div>
+                    <div className="text-center">
+                      <p className="text-xs text-gray-500 mb-1">Take Profit</p>
+                      <p className="text-sm font-bold text-green-400">
+                        ${selectedSignal.targetPrice.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                      </p>
+                      <p className="text-xs text-green-400/70">+{selectedSignal.potentialProfit.toFixed(2)}%</p>
+                    </div>
+                  </div>
+                  
+                  {/* Visual R:R Bar */}
+                  <div className="mt-4">
+                    <div className="flex items-center justify-between text-xs text-gray-500 mb-1">
+                      <span>Stop Loss</span>
+                      <span className="font-medium text-white">R:R {selectedSignal.riskRewardRatio}</span>
+                      <span>Take Profit</span>
+                    </div>
+                    <div className="h-3 bg-[#1a2332] rounded-full overflow-hidden flex relative">
+                      <div 
+                        className="h-full bg-red-500/60"
+                        style={{ width: `${(1 / (1 + selectedSignal.rrMultiple)) * 100}%` }}
+                      />
+                      <div 
+                        className="h-full bg-green-500/60"
+                        style={{ width: `${(selectedSignal.rrMultiple / (1 + selectedSignal.rrMultiple)) * 100}%` }}
+                      />
+                      <div className="absolute top-0 left-1/2 w-0.5 h-full bg-white/50" />
+                    </div>
+                  </div>
+                </div>
               </div>
             </motion.div>
           )}
         </AnimatePresence>
+
+        {/* HOLD Signal State */}
+        {isHoldSignal && !isGenerating && (
+          <motion.div
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="bg-[#111827] rounded-xl p-8 mb-6 border border-yellow-500/30 text-center"
+          >
+            <div className="w-16 h-16 rounded-full bg-yellow-500/20 flex items-center justify-center mx-auto mb-4">
+              <Minus className="w-8 h-8 text-yellow-400" />
+            </div>
+            <h2 className="text-2xl font-bold text-yellow-400 mb-2">HOLD - No Clear Signal</h2>
+            <p className="text-gray-400 max-w-md mx-auto">
+              Market conditions are neutral. Technical indicators show mixed signals. 
+              Wait for a clearer directional bias before entering positions.
+            </p>
+          </motion.div>
+        )}
 
         {/* Loading State */}
         {isGenerating && (
@@ -373,13 +401,13 @@ function App() {
             <div className="text-center">
               <RefreshCw className="w-10 h-10 text-blue-400 animate-spin mx-auto mb-4" />
               <p className="text-gray-400">Fetching real market data from Binance...</p>
-              <p className="text-xs text-gray-600 mt-1">Analyzing technical indicators</p>
+              <p className="text-xs text-gray-600 mt-1">Generating signals for 1:2, 1:3, and 1:4 R:R ratios</p>
             </div>
           </motion.div>
         )}
 
         {/* Signal Reasoning */}
-        {signal && !isGenerating && signal.entryPrice > 0 && (
+        {selectedSignal && !isGenerating && selectedSignal.entryPrice > 0 && !isHoldSignal && (
           <motion.div
             initial={{ opacity: 0, y: 10 }}
             animate={{ opacity: 1, y: 0 }}
@@ -390,13 +418,13 @@ function App() {
               <AlertTriangle className="w-4 h-4 text-yellow-400" />
               <h3 className="text-sm font-medium text-gray-300">Signal Analysis</h3>
             </div>
-            <p className="text-sm text-gray-400 leading-relaxed">{signal.reasoning}</p>
+            <p className="text-sm text-gray-400 leading-relaxed">{selectedSignal.reasoning}</p>
           </motion.div>
         )}
 
         {/* Technical Indicators */}
-        {signal && !isGenerating && signal.indicators.length > 0 && (
-          <IndicatorPanel indicators={signal.indicators} />
+        {selectedSignal && !isGenerating && selectedSignal.indicators.length > 0 && (
+          <IndicatorPanel indicators={selectedSignal.indicators} />
         )}
 
         {/* Signal History */}
@@ -410,8 +438,8 @@ function App() {
             <AlertTriangle className="w-4 h-4 text-yellow-500 mt-0.5 flex-shrink-0" />
             <p className="text-xs text-yellow-500/80 leading-relaxed">
               <strong>Disclaimer:</strong> These signals are generated using technical analysis on real-time market data from Binance. 
-              They are for educational and informational purposes only. Cryptocurrency trading involves significant risk of loss. 
-              Past performance does not guarantee future results. Always do your own research and never invest more than you can afford to lose. 
+              Multiple R:R ratios are provided to suit different risk appetites. Higher R:R ratios offer greater potential reward but lower win probability. 
+              Cryptocurrency trading involves significant risk of loss. Always do your own research and never invest more than you can afford to lose. 
               This is not financial advice.
             </p>
           </div>

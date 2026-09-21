@@ -54,10 +54,11 @@ export default function SignalHistory({ signals }: SignalHistoryProps) {
               <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">Pair</th>
               <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
               <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">Signal</th>
+              <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">R:R</th>
               <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">Strength</th>
               <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">Entry</th>
               <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">Target</th>
-              <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">Confidence</th>
+              <th className="text-left py-3 px-2 text-xs font-medium text-gray-500 uppercase tracking-wider">Prob.</th>
             </tr>
           </thead>
           <tbody>
@@ -96,6 +97,16 @@ export default function SignalHistory({ signals }: SignalHistoryProps) {
                   </div>
                 </td>
                 <td className="py-3 px-2">
+                  <span className={`text-xs font-bold ${
+                    signal.rrMultiple === 2 ? 'text-blue-400' :
+                    signal.rrMultiple === 3 ? 'text-purple-400' :
+                    signal.rrMultiple === 4 ? 'text-orange-400' :
+                    'text-gray-400'
+                  }`}>
+                    {signal.riskRewardRatio}
+                  </span>
+                </td>
+                <td className="py-3 px-2">
                   <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${
                     signal.strength === 'Strong' ? 'bg-green-500/15 text-green-400' :
                     signal.strength === 'Moderate' ? 'bg-blue-500/15 text-blue-400' :
@@ -116,14 +127,14 @@ export default function SignalHistory({ signals }: SignalHistoryProps) {
                     <div className="w-16 h-1.5 bg-[#1a2332] rounded-full overflow-hidden">
                       <div
                         className={`h-full rounded-full ${
-                          signal.confidence > 75 ? 'bg-green-500' :
-                          signal.confidence > 50 ? 'bg-blue-500' :
-                          'bg-yellow-500'
+                          signal.probability > 60 ? 'bg-green-500' :
+                          signal.probability > 45 ? 'bg-yellow-500' :
+                          'bg-red-500'
                         }`}
-                        style={{ width: `${signal.confidence}%` }}
+                        style={{ width: `${signal.probability}%` }}
                       />
                     </div>
-                    <span className="text-xs text-gray-400">{signal.confidence}%</span>
+                    <span className="text-xs text-gray-400">{signal.probability}%</span>
                   </div>
                 </td>
               </motion.tr>
